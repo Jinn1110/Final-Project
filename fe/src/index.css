@@ -1,0 +1,73 @@
+@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@100;200;300;400;700&display=swap");
+
+/* Reset CSS (loại bỏ style mặc định của trình duyệt) */
+* {
+  box-sizing: border-box;
+}
+
+/* Cấu hình font và màu nền mặc định */
+body {
+  font-family: "Roboto", sans-serif;
+  background-color: #000;
+  color: #fff;
+  line-height: 1.6;
+}
+
+/* Liên kết mặc định */
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* Button mặc định */
+button {
+  cursor: pointer;
+}
+
+/* Input mặc định */
+x img {
+  max-width: 100%;
+  display: block;
+}
+
+/* Giữ nguyên nền và màu chữ khi autofill */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px #333333 inset !important;
+  -webkit-text-fill-color: #ffffff !important;
+  transition: background-color 9999s ease-in-out 0s !important;
+  caret-color: #ffffff !important;
+}
+
+/* Ghi đè style popup mặc định của Leaflet */
+.leaflet-popup-content-wrapper {
+  background: #1a1a1a !important; /* màu nền tối */
+  color: #fff !important; /* chữ trắng */
+  border-radius: 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Mũi tên popup */
+.leaflet-popup-tip {
+  background: #1a1a1a !important;
+}
+
+/* Xóa khoảng trống mặc định */
+.leaflet-popup-content {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Ẩn nút X của popup */
+.leaflet-popup-close-button {
+  display: none !important;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+@import "tailwindcss";
