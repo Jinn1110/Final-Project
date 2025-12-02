@@ -1,11 +1,20 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
-import { MessagePattern, Payload } from '@nestjs/microservices';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  BadRequestException,
+} from '@nestjs/common';
 import { TracksService } from './tracks.service';
+import { Public } from '../common/decorators/isPublic';
 
 @Controller('tracks')
 export class TracksController {
   constructor(private readonly tracksService: TracksService) {}
 
+  // Lấy dữ liệu mới nhất của một thiết bị
   @Get(':deviceId/latest')
   async getLatest(
     @Param('deviceId') deviceId: string,
@@ -14,17 +23,18 @@ export class TracksController {
     return this.tracksService.getLatestTracks(deviceId, +limit);
   }
 
-  @MessagePattern('gnss/tracks/#')
-  async handleTrack(@Payload() data: any) {
-    // Nếu MQTT gửi string JSON, parse
-    console.log(data);
-    const payload = typeof data === 'string' ? JSON.parse(data) : data;
-
-    if (!payload.device_id) {
-      console.warn('Invalid track payload, missing device_id', payload);
-      return;
+  @Post()
+  @Public()
+  async createTrack(@Body() payload: any) {
+    // Kiểm tra payload cơ bản
+    if (!payload.device_id || !payload.timestamp) {
+      throw new BadRequestException('Missing device_id or timestamp');
     }
+    console.log(payload);
 
+    // Bạn có thể thêm validate chi tiết hơn ở đây nếu muốn
+
+    // Gọi service để lưu vào DB
     return this.tracksService.ingest(payload);
   }
 }

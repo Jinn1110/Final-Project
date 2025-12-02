@@ -1,64 +1,144 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
-import {
-  JammingStatus,
-  SpoofingStatus,
-} from '../../common/enums/device-status.enum';
 
 export type TrackDocument = HydratedDocument<Track>;
 
 @Schema({ timestamps: false, collection: 'tracks' })
 export class Track {
   @Prop({ required: true, index: true })
-  device_id: string; // MUST use this consistently everywhere
+  device_id: string;
 
   @Prop({ required: true, index: true })
-  ts: Date;
+  timestamp: Date;
 
-  @Prop({ required: true })
-  lat: number;
-
-  @Prop({ required: true })
-  lon: number;
-
-  @Prop()
-  alt?: number;
+  @Prop({ type: { latitude: Number, longitude: Number }, required: true })
+  location: {
+    latitude: number;
+    longitude: number;
+  };
 
   @Prop()
-  fix_type?: string;
+  num_sats_used?: number;
+
+  // DOP object
+  @Prop({
+    type: {
+      gdop: Number,
+      pdop: Number,
+      tdop: Number,
+      vdop: Number,
+      hdop: Number,
+      ndop: Number,
+      edop: Number,
+    },
+  })
+  dop?: {
+    gdop?: number;
+    pdop?: number;
+    tdop?: number;
+    vdop?: number;
+    hdop?: number;
+    ndop?: number;
+    edop?: number;
+  };
+
+  // Time accuracy per GNSS
+  @Prop({ type: Map, of: Number, default: {} })
+  time_accuracy?: Map<string, number>;
 
   @Prop()
-  sats?: number; // số lượng vệ tinh ở thời điểm track
+  cn0_total?: number;
 
-  @Prop()
-  cn0?: number;
+  @Prop({
+    type: [
+      {
+        name: String,
+        num_tracked: Number,
+        num_used: Number,
+        cn0: Number,
+      },
+    ],
+    default: [],
+  })
+  constellations: {
+    name: string;
+    num_tracked: number;
+    num_used: number;
+    cn0: number;
+  }[];
 
-  @Prop({ enum: SpoofingStatus, default: SpoofingStatus.NONE })
-  spoofingStatus: SpoofingStatus;
+  @Prop({
+    type: [
+      {
+        spectrum: [Number],
+        center: Number,
+        span: Number,
+        resolution: Number,
+        gain: Number,
+      },
+    ],
+    default: [],
+  })
+  waterfall: {
+    spectrum: number[];
+    center: number;
+    span: number;
+    resolution: number;
+    gain: number;
+  }[];
 
-  @Prop({ enum: JammingStatus, default: JammingStatus.NONE })
-  jammingStatus: JammingStatus;
+  @Prop({
+    type: [
+      {
+        rf_block: Number,
+        agc: Number,
+        noise_per_ms: Number,
+        jam_indicator: Number,
+      },
+    ],
+    default: [],
+  })
+  rf_status: {
+    rf_block: number;
+    agc: number;
+    noise_per_ms: number;
+    jam_indicator: number;
+  }[];
 
-  @Prop({ type: Object })
-  payload?: Record<string, any>;
+  // --- Thêm phần Position Deviation ---
+  @Prop({
+    type: {
+      hAcc: Number,
+      vAcc: Number,
+    },
+  })
+  position_deviation?: {
+    hAcc: number;
+    vAcc: number;
+  };
 
-  @Prop()
-  total_quality: number; // 0-100
-
-  @Prop()
-  gps_quality: number; // %
-
-  @Prop()
-  gal_quality: number;
-
-  @Prop()
-  glo_quality: number;
-
-  @Prop()
-  bds_quality: number;
+  // --- Thêm phần PosCovariance ---
+  @Prop({
+    type: {
+      NN: Number,
+      NE: Number,
+      ND: Number,
+      EE: Number,
+      ED: Number,
+      DD: Number,
+    },
+  })
+  posCov?: {
+    NN: number;
+    NE: number;
+    ND: number;
+    EE: number;
+    ED: number;
+    DD: number;
+  };
 }
 
 export const TrackSchema = SchemaFactory.createForClass(Track);
 
-// best index pattern cho query realtime + playback
-TrackSchema.index({ device_id: 1, ts: -1 });
+// Index để truy vấn nhanh theo thiết bị & timestamp
+TrackSchema.index({ device_id: 1, timestamp: -1 });

@@ -2,35 +2,31 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Track, TrackDocument } from './schemas/track.schema';
-import { DevicesService } from '../devices/devices.service';
-import {
-  JammingStatus,
-  SpoofingStatus,
-} from '../common/enums/device-status.enum';
 
 @Injectable()
 export class TracksService {
   constructor(
     @InjectModel(Track.name) private trackModel: Model<TrackDocument>,
-    private readonly devicesService: DevicesService,
   ) {}
 
   // Lấy các track mới nhất theo device
   async getLatestTracks(deviceId: string, limit: number = 100) {
     return this.trackModel
       .find({ device_id: deviceId })
-      .sort({ ts: -1 })
+      .sort({ timestamp: -1 })
       .limit(limit)
       .lean();
   }
 
-  // Ingest dữ liệu từ MQTT
+  // Ingest dữ liệu từ HTTP POST
   async ingest(payload: any) {
+    // Validate cơ bản
     if (
       !payload.device_id ||
-      !payload.ts ||
-      payload.lat === undefined ||
-      payload.lon === undefined
+      !payload.timestamp ||
+      !payload.location ||
+      payload.location.latitude === undefined ||
+      payload.location.longitude === undefined
     ) {
       console.warn('Invalid payload, cannot ingest', payload);
       return false;
@@ -38,42 +34,28 @@ export class TracksService {
 
     const doc: Partial<Track> = {
       device_id: payload.device_id,
-      ts: new Date(payload.ts),
-      lat: payload.lat,
-      lon: payload.lon,
-      alt: payload.alt,
-      fix_type: payload.fix_type,
-      sats: payload.sats,
-      cn0: payload.cn0,
-      spoofingStatus: payload.spoofingStatus ?? SpoofingStatus.NONE,
-      jammingStatus: payload.jammingStatus ?? JammingStatus.NONE,
-      total_quality: payload.total_quality ?? 0,
-      gps_quality: payload.gps_quality ?? 0,
-      gal_quality: payload.gal_quality ?? 0,
-      glo_quality: payload.glo_quality ?? 0,
-      bds_quality: payload.bds_quality ?? 0,
-      payload: payload.payload ?? {}, // chỉ lưu phần dữ liệu mở rộng
+      timestamp: new Date(payload.timestamp),
+      location: {
+        latitude: payload.location.latitude,
+        longitude: payload.location.longitude,
+      },
+      num_sats_used: payload.num_sats_used ?? null,
+      dop: payload.dop ?? null,
+      time_accuracy: payload.time_accuracy ?? {},
+      cn0_total: payload.cn0_total ?? null,
+      constellations: payload.constellations ?? [],
+      waterfall: payload.waterfall ?? [],
+      rf_status: payload.rf_status ?? [],
+      position_deviation: payload.position_deviation ?? null,
+      posCov: payload.posCov ?? null,
     };
 
-    // Lưu track vào MongoDB
-    await this.trackModel.create(doc);
-
-    // Cập nhật last known GNSS của device
-    await this.devicesService.updateLastKnownGNSS(payload.device_id, {
-      latitude: payload.lat,
-      longitude: payload.lon,
-      sats: payload.sats,
-      cn0: payload.cn0,
-      spoofingStatus: payload.spoofingStatus ?? SpoofingStatus.NONE,
-      jammingStatus: payload.jammingStatus ?? JammingStatus.NONE,
-      total_quality: payload.total_quality ?? 0,
-      gps_quality: payload.gps_quality ?? 0,
-      gal_quality: payload.gal_quality ?? 0,
-      glo_quality: payload.glo_quality ?? 0,
-      bds_quality: payload.bds_quality ?? 0,
-      last_seen: new Date(payload.ts),
-    });
-
-    return true;
+    try {
+      await this.trackModel.create(doc);
+      return true;
+    } catch (err) {
+      console.error('Error saving track to DB:', err);
+      return false;
+    }
   }
 }

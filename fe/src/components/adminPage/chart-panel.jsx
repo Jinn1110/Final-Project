@@ -1,6 +1,3 @@
-"use client";
-
-import React from "react";
 import { Maximize2, Download, MoreVertical } from "lucide-react";
 
 export default function ChartPanel({ title, children, className = "" }) {
