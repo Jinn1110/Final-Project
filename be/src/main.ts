@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
-import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule); // tạo HTTP server bình thường
@@ -22,15 +21,6 @@ async function bootstrap() {
     preflightContinue: false,
   });
 
-  // Connect MQTT microservice
-  app.connectMicroservice<MicroserviceOptions>({
-    transport: Transport.MQTT,
-    options: {
-      url: 'mqtt://18.142.240.186',
-    },
-  });
-
-  await app.startAllMicroservices(); // start MQTT listener
   await app.listen(configService.get<number>('PORT') ?? 3000, '0.0.0.0'); // start HTTP server
 }
 

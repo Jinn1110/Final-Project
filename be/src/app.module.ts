@@ -7,6 +7,8 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { DevicesModule } from './devices/devices.module';
 import { TracksModule } from './tracks/tracks.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { SocketModule } from './socket/socket.module';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { TracksModule } from './tracks/tracks.module';
     AuthModule,
     DevicesModule,
     TracksModule,
+    SocketModule,
+    ScheduleModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [AppService],

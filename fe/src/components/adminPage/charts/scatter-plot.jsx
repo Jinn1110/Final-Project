@@ -9,17 +9,17 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
+  ReferenceLine,
   Label,
 } from "recharts";
 import trackApi from "../../../api/trackApi";
 
 export default function ScatterPlot({
   deviceId = null,
-  limit = 100,
-  height = 300,
+  limit = 1,
+  height = 350,
 }) {
-  const [data, setData] = useState([]);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,25 +28,34 @@ export default function ScatterPlot({
     const fetch = async () => {
       try {
         setLoading(true);
-        const res = await trackApi.getLatest(deviceId || "GNSS-0001", limit);
+        const res = await trackApi.getLatest(deviceId || "GNSS-0001", 1);
         const tracks = Array.isArray(res.data) ? res.data : [];
-        const points = tracks
-          .map((t) => {
-            const pd = t.position_deviation || t.positionDeviation || null;
-            if (!pd) return null;
-            return {
-              x: pd.hAcc ?? null,
-              y: pd.vAcc ?? null,
-              timestamp: t.timestamp
-                ? new Date(t.timestamp).toLocaleTimeString()
-                : "-",
-            };
-          })
-          .filter(Boolean);
-        if (!cancelled) setData(points);
+
+        if (tracks.length === 0 || !tracks[0]) {
+          if (!cancelled) setData(null);
+          return;
+        }
+
+        const latest = tracks[0];
+        const pd = latest.position_deviation || latest.positionDeviation;
+
+        if (!pd || pd.hAcc == null || pd.vAcc == null) {
+          if (!cancelled) setData(null);
+          return;
+        }
+
+        const point = {
+          hAcc: Number(pd.hAcc.toFixed(2)),
+          vAcc: Number(pd.vAcc.toFixed(2)),
+          timestamp: latest.timestamp
+            ? new Date(latest.timestamp).toLocaleString("vi-VN")
+            : "—",
+        };
+
+        if (!cancelled) setData(point);
       } catch (err) {
-        console.warn("Failed to load position deviation", err);
-        if (!cancelled) setData([]);
+        console.warn("Failed to load latest position deviation", err);
+        if (!cancelled) setData(null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -54,98 +63,150 @@ export default function ScatterPlot({
 
     fetch();
     return () => (cancelled = true);
-  }, [deviceId, limit]);
+  }, [deviceId]);
 
   if (loading) {
     return (
-      <div className="w-full h-full min-h-[250px] flex items-center justify-center">
-        <div className="text-neutral-400">Loading...</div>
+      <div className="w-full h-full min-h-[300px] flex items-center justify-center bg-zinc-900/60 rounded-2xl">
+        <div className="text-zinc-400 text-lg">
+          Đang tải dữ liệu mới nhất...
+        </div>
       </div>
     );
   }
 
-  if (!data.length) {
+  if (!data) {
     return (
-      <div className="w-full h-full min-h-[250px] flex items-center justify-center">
-        <div className="text-neutral-400">No position deviation data</div>
+      <div className="w-full h-full min-h-[300px] flex items-center justify-center bg-zinc-900/60 rounded-2xl">
+        <div className="text-center">
+          <p className="text-zinc-400 text-lg">
+            Không có dữ liệu position deviation
+          </p>
+          <p className="text-zinc-500 text-sm mt-2">
+            Bản tin mới nhất chưa có hAcc/vAcc
+          </p>
+        </div>
       </div>
     );
   }
+
+  // Tăng margin để điểm chấm nằm gần gốc hơn, tránh dính cạnh
+  const maxValue = Math.max(data.hAcc, data.vAcc);
+  const domainMax = Math.ceil(maxValue * 1.5 * 10) / 10; // Tăng lên 1.5x để điểm gần gốc
+
+  const chartData = [data];
 
   return (
-    <div className="w-full h-full min-h-[250px]">
+    <div className="w-full h-full bg-zinc-900/60 rounded-2xl p-5 shadow-2xl border border-zinc-800">
+      <h3 className="text-xl font-bold text-emerald-400 mb-1 text-center">
+        Độ Chính Xác Vị Trí Mới Nhất
+      </h3>
+
       <ResponsiveContainer width="100%" height={height}>
-        <ScatterChart margin={{ top: 10, right: 20, bottom: 30, left: 20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+        <ScatterChart
+          margin={{
+            top: 20,
+            right: 40,
+            bottom: 50, // ← Giảm để nhãn không bị cắt
+            left: 40, // ← Giảm mạnh để trục vAcc dịch về bên trái
+          }}
+        >
+          <CartesianGrid strokeDasharray="4 4" stroke="#374151" opacity={0.4} />
 
           <XAxis
-            dataKey="x"
             type="number"
-            tick={{ fontSize: 12, fill: "#999" }}
-            stroke="#444"
-            domain={["dataMin", "dataMax"]}
-            tickFormatter={(value) => value.toFixed(2)}
+            dataKey="hAcc"
+            domain={[0, domainMax]}
+            stroke="#9ca3af"
+            tick={{ fill: "#9ca3af", fontSize: 12 }}
+            padding={{ left: 10, right: 10 }}
           >
             <Label
+              value="hAcc (mét)"
               position="bottom"
               offset={10}
-              style={{ fill: "#aaa", fontWeight: "bold" }}
+              style={{ fill: "#e5e7eb", fontSize: 13, fontWeight: "bold" }}
             />
           </XAxis>
 
           <YAxis
-            dataKey="y"
             type="number"
-            tick={{ fontSize: 12, fill: "#999" }}
-            stroke="#444"
-            domain={["dataMin", "dataMax"]}
-            tickFormatter={(value) => value.toFixed(2)}
+            dataKey="vAcc"
+            domain={[0, domainMax]}
+            stroke="#9ca3af"
+            tick={{ fill: "#9ca3af", fontSize: 12 }}
+            padding={{ top: 10, bottom: 10 }}
           >
             <Label
+              value="vAcc (mét)"
               angle={-90}
               position="left"
-              offset={-10}
-              style={{ fill: "#aaa", fontWeight: "bold" }}
+              offset={10}
+              style={{ fill: "#e5e7eb", fontSize: 13, fontWeight: "bold" }}
             />
           </YAxis>
 
+          {/* Đường tham chiếu lý tưởng */}
+          <ReferenceLine
+            segment={[
+              { x: 0, y: 0 },
+              { x: domainMax, y: domainMax },
+            ]}
+            stroke="#f59e0b"
+            strokeDasharray="5 5"
+            strokeWidth={2}
+          >
+            <Label
+              value="hAcc = vAcc"
+              position="insideTopRight"
+              fill="#f59e0b"
+              fontSize={12}
+              fontWeight="bold"
+            />
+          </ReferenceLine>
+
           <Tooltip
             contentStyle={{
-              backgroundColor: "#1a1a1a",
-              border: "1px solid #555",
-              borderRadius: "6px",
+              backgroundColor: "#111827",
+              border: "1px solid #374151",
+              borderRadius: "10px",
               padding: "10px",
-              fontSize: "13px",
             }}
-            cursor={{ stroke: "#06B6D4", strokeWidth: 1 }}
-            formatter={(value, name) => [
-              typeof value === "number" ? value.toFixed(2) : value,
-              name === "x" ? "hAcc (m)" : "vAcc (m)",
-            ]}
-            labelFormatter={(label, payload) => {
-              if (payload && payload.length > 0) {
-                return `Time: ${payload[0].payload.timestamp}`;
-              }
-              return `Time: ${label}`;
-            }}
-            labelStyle={{ color: "#FBBF24", fontWeight: "bold" }}
-            itemStyle={{ color: "#06B6D4", fontWeight: "bold" }}
+            labelStyle={{ color: "#fbbf24", fontWeight: "bold" }}
+            formatter={(value) => `${value} m`}
+            labelFormatter={() => `Thời gian: ${data.timestamp}`}
           />
 
-          <Legend
-            wrapperStyle={{ paddingTop: "10px", color: "#aaa" }}
-            layout="horizontal"
-          />
-
+          {/* 1 điểm duy nhất – to và nổi bật */}
           <Scatter
-            name="Position Deviation"
-            data={data}
-            fill="#10B981"
-            line={{ stroke: "#10B981" }}
+            name="Đo mới nhất"
+            data={chartData}
+            fill="#10b981"
+            stroke="#059669"
+            strokeWidth={4}
             shape="circle"
           />
         </ScatterChart>
       </ResponsiveContainer>
+
+      {/* Thông tin chi tiết */}
+      <div className="mt-5 grid grid-cols-2 gap-5 text-center">
+        <div className="bg-zinc-800/60 rounded-xl p-4 border border-zinc-700">
+          <p className="text-zinc-400 text-sm">Độ chính xác ngang</p>
+          <p className="text-3xl font-bold text-cyan-400 mt-2">{data.hAcc} m</p>
+        </div>
+        <div className="bg-zinc-800/60 rounded-xl p-4 border border-zinc-700">
+          <p className="text-zinc-400 text-sm">Độ chính xác dọc</p>
+          <p className="text-3xl font-bold text-purple-400 mt-2">
+            {data.vAcc} m
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 text-center text-xs text-zinc-400 space-y-1">
+        <p>• Hiển thị bản tin mới nhất</p>
+        <p>• Gần góc (0,0) → định vị càng chính xác</p>
+      </div>
     </div>
   );
 }

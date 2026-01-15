@@ -1,66 +1,47 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
-import {
-  JammingStatus,
-  SpoofingStatus,
-} from '../../common/enums/device-status.enum';
+import { Document } from 'mongoose';
 
-export type DeviceDocument = HydratedDocument<Device>;
+export type DeviceDocument = Device & Document;
 
-@Schema({ timestamps: true, collection: 'devices' })
+@Schema({
+  collection: 'devices',
+  timestamps: true,
+})
 export class Device {
-  @Prop({ required: true, unique: true })
-  device_id: string; // phải nhất quán với Track.device_id
+  @Prop({
+    required: true,
+    unique: true,
+    trim: true,
+  })
+  deviceId: string;
 
-  @Prop()
-  device_secret_hash: string; // hash, không lưu plain text
+  @Prop({
+    type: Date,
+    default: null,
+  })
+  lastSeen: Date | null;
 
-  @Prop({ required: true })
-  name: string;
+  @Prop({
+    trim: true,
+  })
+  owner: string;
 
-  @Prop({ type: Object })
-  metadata: Record<string, any>;
+  @Prop({
+    type: Boolean,
+    default: false,
+  })
+  isDeleted: boolean;
 
-  // last known GNSS fix
-  @Prop()
-  latitude?: number;
-
-  @Prop()
-  longitude?: number;
-
-  @Prop()
-  sats?: number;
-
-  @Prop({ enum: SpoofingStatus, default: SpoofingStatus.NONE })
-  spoofingStatus: SpoofingStatus;
-
-  @Prop({ enum: JammingStatus, default: JammingStatus.NONE })
-  jammingStatus: JammingStatus;
-
-  @Prop({ type: Number, min: 0, max: 60 })
-  cn0?: number;
-
-  @Prop()
-  last_seen?: Date;
-
-  // optional: tổng hợp chất lượng GNSS từ track
-  @Prop()
-  total_quality?: number;
-
-  @Prop()
-  gps_quality?: number;
-
-  @Prop()
-  gal_quality?: number;
-
-  @Prop()
-  glo_quality?: number;
-
-  @Prop()
-  bds_quality?: number;
+  @Prop({
+    type: Date,
+    default: null,
+  })
+  deletedAt: Date | null;
 }
 
 export const DeviceSchema = SchemaFactory.createForClass(Device);
 
-// index device_id để query nhanh
-DeviceSchema.index({ device_id: 1 });
+DeviceSchema.index({ lastSeen: 1 });
+DeviceSchema.index({ owner: 1 });
+DeviceSchema.index({ isDeleted: 1 });
+DeviceSchema.index({ deviceId: 1, isDeleted: 1 });

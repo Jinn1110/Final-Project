@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { SettingMapIcon } from "../../icons/SettingMapIcon";
 import { ArrowIcon } from "../../icons/ArrowIcon";
 
@@ -11,137 +11,226 @@ const MapSideBar = ({
   setOpenDataSource,
   selectedMode,
   setSelectedMode,
+  selectedDevice,
+  setSelectedDevice,
   selectedDataSource,
   setSelectedDataSource,
-  dataSourceList,
+  deviceList = [],
 }) => {
+  const [expandedDevice, setExpandedDevice] = useState(null);
+
+  useEffect(() => {
+    setExpandedDevice(selectedDevice ?? null);
+  }, [selectedDevice]);
+
   return (
     <>
+      {/* Sidebar - overlay lên map */}
       <div
-        className={`h-screen bg-[#0f1417] border-r border-[#1f2426] shadow-xl select-none flex flex-col transition-all duration-300 overflow-hidden
-            absolute top-0 left-0 z-[1000]
-            ${showSidebar ? "w-66" : "w-0"}`}
+        className={`absolute inset-y-0 left-0 z-[999] flex flex-col bg-[#0f1417] border-r border-[#1f2426] shadow-2xl transition-all duration-300 ease-in-out overflow-hidden
+          ${showSidebar ? "w-72" : "w-0"}`}
       >
-        <h2
-          className={`text-gray-200 text-xl font-medium px-4 py-5 border-b border-[#1f2426] transition-opacity duration-300
+        <div className="h-full flex flex-col">
+          <h2
+            className={`px-6 py-5 text-xl font-semibold text-gray-200 border-b border-[#1f2426] transition-opacity duration-300
               ${showSidebar ? "opacity-100" : "opacity-0"}`}
-        >
-          MAP SETTING
-        </h2>
+          >
+            MAP SETTINGS
+          </h2>
 
-        <div
-          className={`flex-1 overflow-y-auto pr-1 transition-opacity duration-300
+          <div
+            className={`flex-1 overflow-y-auto px-4 py-4 transition-opacity duration-300
               ${showSidebar ? "opacity-100" : "opacity-0"}`}
-        >
-          {/* Mode */}
-          <div className="mt-2 mx-2 bg-[#1a1f22] rounded-lg hover:bg-[#22282b] transition-all duration-200">
-            <div
-              className="flex items-center justify-between px-4 py-3 cursor-pointer"
-              onClick={() => setOpenMode(!openMode)}
-            >
-              <div className="flex items-center gap-3">
-                <SettingMapIcon className="h-5 w-5 text-green-500" />
-                <p className="text-green-500 font-medium text-sm">Mode</p>
-              </div>
-              <ArrowIcon
-                className={`h-4 w-4 text-green-500 ${
-                  openMode ? "rotate-90" : "rotate-270"
-                }`}
-              />
+          >
+            {/* === MODE SECTION === */}
+            <div className="mb-4 rounded-xl bg-[#1a1f22] hover:bg-[#22282b] transition-colors">
+              <button
+                onClick={() => setOpenMode(!openMode)}
+                className="w-full flex items-center justify-between px-5 py-4"
+              >
+                <div className="flex items-center gap-3">
+                  <SettingMapIcon className="h-5 w-5 text-green-500" />
+                  <span className="text-green-500 font-medium text-sm">
+                    Mode
+                  </span>
+                </div>
+                <ArrowIcon
+                  className={`h-4 w-4 text-green-500 transition-transform duration-200 ${
+                    openMode ? "rotate-90" : "-rotate-90"
+                  }`}
+                />
+              </button>
+
+              {openMode && showSidebar && (
+                <div className="px-4 pb-4 space-y-1">
+                  {[
+                    {
+                      value: "real-time",
+                      label: "Real-time",
+                      color: "blue-500",
+                    },
+                    {
+                      value: "historical",
+                      label: "Historical",
+                      color: "purple-500",
+                    },
+                    {
+                      value: "statistics",
+                      label: "Overlimit Statistics",
+                      color: "red-600",
+                    },
+                  ].map((mode) => (
+                    <button
+                      key={mode.value}
+                      onClick={() => setSelectedMode(mode.value)}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all
+                        ${
+                          selectedMode === mode.value
+                            ? "bg-[#2f3538] text-white"
+                            : "text-gray-300 hover:bg-[#2f3538] hover:text-white"
+                        }`}
+                    >
+                      <div
+                        className={`w-2 h-2 rounded-full bg-${mode.color}`}
+                      />
+                      <span>{mode.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {openMode && (
-              <div className="px-2 pb-2">
-                {["real-time", "historical", "statistics"].map((m) => (
-                  <div
-                    key={m}
-                    onClick={() => setSelectedMode(m)}
-                    className={`px-3 py-1.5 rounded cursor-pointer transition-colors flex items-center gap-2 text-sm mb-1
-                          ${
-                            selectedMode === m
-                              ? "bg-[#2f3538] text-white"
-                              : "text-gray-300 hover:bg-[#2f3538] hover:text-white"
-                          }`}
-                  >
-                    {m === "real-time" && (
-                      <div className="w-1 h-1 rounded-full bg-blue-500"></div>
-                    )}
-                    {m === "historical" && (
-                      <div className="w-1 h-1 rounded-full bg-purple-500"></div>
-                    )}
-                    {m === "statistics" && (
-                      <div className="w-1 h-1 rounded-full bg-red-700"></div>
-                    )}
-                    {m === "real-time"
-                      ? "Real-time"
-                      : m === "historical"
-                      ? "Historical"
-                      : "Overlimit Statistics"}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+            {/* === DEVICES SECTION === */}
+            <div className="rounded-xl bg-[#1a1f22] hover:bg-[#22282b] transition-colors">
+              <button
+                onClick={() => setOpenDataSource(!openDataSource)}
+                className="w-full flex items-center justify-between px-5 py-4"
+              >
+                <div className="flex items-center gap-3">
+                  <SettingMapIcon className="h-5 w-5 text-cyan-400" />
+                  <span className="text-green-500 font-medium text-sm">
+                    Devices
+                  </span>
+                </div>
+                <ArrowIcon
+                  className={`h-4 w-4 text-green-500 transition-transform duration-200 ${
+                    openDataSource ? "rotate-90" : "-rotate-90"
+                  }`}
+                />
+              </button>
 
-          {/* Data Source */}
-          <div className="mt-2 mx-2 bg-[#1a1f22] rounded-lg hover:bg-[#22282b] transition-all duration-200 mb-4">
-            <div
-              className="flex items-center justify-between px-4 py-3 cursor-pointer"
-              onClick={() => setOpenDataSource(!openDataSource)}
-            >
-              <div className="flex items-center gap-3">
-                <SettingMapIcon className="h-5 w-5 text-cyan-400" />
-                <p className="text-green-500 font-medium text-sm">
-                  Data Source
-                </p>
-              </div>
-              <ArrowIcon
-                className={`h-4 w-4 text-green-500 ${
-                  openDataSource ? "rotate-90" : "rotate-270"
-                }`}
-              />
+              {openDataSource && showSidebar && (
+                <div className="px-4 pb-4 space-y-2">
+                  {deviceList.map((device) => {
+                    const id = device?.id ?? device;
+                    const label =
+                      device?.name ??
+                      (typeof device === "string"
+                        ? device.replace(/-/g, " ")
+                        : id);
+
+                    const isSelected = selectedDevice === id;
+                    const isExpanded = expandedDevice === id;
+
+                    return (
+                      <div key={id} className="rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => {
+                            setSelectedDevice(id);
+                            setExpandedDevice(isExpanded ? null : id);
+                          }}
+                          className={`w-full flex items-center justify-between px-4 py-3 text-sm transition-all
+                            ${isSelected ? "text-white" : "text-gray-300"}`}
+                        >
+                          <span className="font-medium truncate">{label}</span>
+                          <div className="flex items-center gap-3">
+                            {isSelected && (
+                              <div className="w-2 h-2 rounded-full bg-cyan-400" />
+                            )}
+                            <ArrowIcon
+                              className={`h-4 w-4 text-green-500 transition-transform duration-200 ${
+                                isExpanded ? "rotate-90" : "-rotate-90"
+                              }`}
+                            />
+                          </div>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="pl-8 pr-4 pb-2 space-y-1">
+                            {(device?.dataSources || []).length > 0 ? (
+                              device.dataSources.map((ds) => (
+                                <button
+                                  key={ds}
+                                  onClick={() => {
+                                    setSelectedDataSource(ds);
+                                    setSelectedDevice(id);
+                                  }}
+                                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all
+                                    ${
+                                      selectedDataSource === ds
+                                        ? "bg-[#2f3538] text-white"
+                                        : "text-gray-400 hover:bg-[#2f3538] hover:text-white"
+                                    }`}
+                                >
+                                  <span className="truncate">
+                                    {ds.replace(/-/g, " ")}
+                                  </span>
+                                  {selectedDataSource === ds && (
+                                    <div className="w-2 h-2 rounded-full bg-cyan-400" />
+                                  )}
+                                </button>
+                              ))
+                            ) : (
+                              <div className="text-xs text-gray-500 py-1">
+                                No data sources
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-
-            {openDataSource && (
-              <div className="px-2 pb-3 space-y-1">
-                {dataSourceList.map((ds) => (
-                  <div
-                    key={ds}
-                    onClick={() => setSelectedDataSource(ds)}
-                    className={`px-3 py-1.5 rounded cursor-pointer transition-colors flex items-center justify-between text-sm
-                          ${
-                            selectedDataSource === ds
-                              ? "bg-[#2f3538] text-white"
-                              : "text-gray-300 hover:bg-[#2f3538] hover:text-white"
-                          }`}
-                  >
-                    <span>{ds.replaceAll("-", " ")}</span>
-                    {selectedDataSource === ds && (
-                      <div className="w-1 h-1 rounded-full bg-cyan-400"></div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>
 
-      {/* Toggle button */}
       <button
         onClick={() => setShowSidebar(!showSidebar)}
-        className={`absolute top-1/2 -translate-y-1/2 z-[1000] bg-[#1a1f22] text-white px-1.5 py-1.5 rounded-r-lg border border-[#2a2f32] hover:bg-[#22282b] transition-all duration-300 flex flex-col items-center justify-center ${
-          showSidebar ? "left-66" : "left-0"
-        }`}
+        className={`
+          absolute top-1/2 -translate-y-1/2 z-[1001]
+          flex flex-col items-center justify-center
+          w-6 h-32
+          bg-[#1a1f22]/95 backdrop-blur-sm
+          hover:bg-[#1a1f22]
+          text-green-400
+          rounded-r-lg
+          border border-l-0 border-[#2a2f32]
+          shadow-xl
+          transition-all duration-300 ease-in-out
+          hover:shadow-2xl hover:ring-2 hover:ring-green-500/40
+          ${showSidebar ? "left-72" : "left-0"}
+        `}
       >
+        {/* Mũi tên */}
         <ArrowIcon
-          className={`text-green-500 transition-transform duration-300 ${
-            showSidebar ? "rotate-0" : "rotate-180"
+          className={`h-5 w-5 transition-transform duration-300 ${
+            showSidebar ? "rotate-180" : "rotate-0"
           }`}
         />
-        <div className="flex flex-col items-center text-[7px] tracking-wider">
-          {"Map SETTINGS".split("").map((c, i) => (
-            <span key={i}>{c === " " ? "\u00A0" : c}</span>
+
+        {/* Chữ SETTINGS tách từng chữ, font nhỏ hơn */}
+        <div className="flex flex-col items-center leading-none">
+          {"SETTINGS".split("").map((letter, index) => (
+            <span
+              key={index}
+              className="text-[8px] font-bold tracking-widest text-green-300"
+              style={{ lineHeight: "1.1" }}
+            >
+              {letter}
+            </span>
           ))}
         </div>
       </button>

@@ -1,208 +1,186 @@
-"use client";
-
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import Plotly from "plotly.js-dist-min";
 import trackApi from "../../../api/trackApi";
 
-const SpectrumWaterfall = ({ deviceId = "GNSS-0001", limit = 50 }) => {
-  const containerRef = useRef(null);
-  const canvasRef = useRef(null);
-  const waterfallRef = useRef([]);
-  const [size, setSize] = useState({ width: 800, height: 420 });
-  const [redrawTrigger, setRedrawTrigger] = useState(0);
+const SpectrumWaterfall = ({ deviceId, startTime, endTime }) => {
+  const plotRef = useRef(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const margin = { top: 36, bottom: 36, left: 64, right: 72 };
-  const maxRows = 200; // số lượng row tối đa hiển thị
-
-  const intensityToColor = (p) => {
-    const clamped = Math.max(0, Math.min(1, p));
-    const hue = (1 - clamped) * 240; // blue -> red
-    const lightness = 28 + clamped * 44; // 28% -> 72%
-    return `hsl(${hue}deg 100% ${lightness}%)`;
-  };
-
-  const drawColorbar = (ctx, x, y, w, h, minVal, maxVal) => {
-    const grad = ctx.createLinearGradient(0, y, 0, y + h);
-    for (let t = 0; t <= 1; t += 0.02)
-      grad.addColorStop(t, intensityToColor(1 - t));
-    ctx.fillStyle = grad;
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = "rgba(255,255,255,0.08)";
-    ctx.strokeRect(x, y, w, h);
-
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.font = "11px Arial";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(maxVal.toFixed(2), x + w + 6, y);
-    ctx.textBaseline = "bottom";
-    ctx.fillText(minVal.toFixed(2), x + w + 6, y + h);
-  };
-
-  const drawCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const width = size.width;
-    const height = size.height;
-
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
-
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-
-    const innerW = width - margin.left - margin.right;
-    const innerH = height - margin.top - margin.bottom;
-
-    const waterfall = waterfallRef.current || [];
-    if (!waterfall.length) {
-      ctx.fillStyle = "rgba(255,255,255,0.85)";
-      ctx.font = "14px Arial";
-      ctx.textAlign = "center";
-      ctx.fillText("Waiting...", width / 2, height / 2);
+  useEffect(() => {
+    if (!deviceId || !startTime || !endTime) {
+      setLoading(false);
       return;
     }
 
-    const numRows = Math.min(waterfall.length, maxRows);
-    const numBins = waterfall[0].spectrum.length;
-
-    // Min/Max values
-    const flat = waterfall.flatMap((r) =>
-      r.spectrum.map(Number).filter(Number.isFinite)
-    );
-    const minVal = flat.length ? Math.min(...flat) : 0;
-    const maxVal = flat.length ? Math.max(...flat) : 1;
-
-    // X axis labels
-    const first = waterfall[0];
-    if (first && first.center && first.span) {
-      const centerHz = Number(first.center);
-      const spanHz = Number(first.span);
-      const steps = 4;
-      ctx.fillStyle = "rgba(255,255,255,0.85)";
-      ctx.font = "11px Arial";
-      ctx.textAlign = "center";
-      for (let i = 0; i <= steps; i++) {
-        const freq = centerHz - spanHz / 2 + (spanHz / steps) * i;
-        const xPos = margin.left + (innerW / steps) * i;
-        let label = "";
-        if (freq >= 1e9) label = (freq / 1e9).toFixed(2) + " GHz";
-        else if (freq >= 1e6) label = (freq / 1e6).toFixed(2) + " MHz";
-        else if (freq >= 1e3) label = (freq / 1e3).toFixed(2) + " kHz";
-        else label = freq + " Hz";
-        ctx.fillText(label, xPos, height - 10);
-      }
-    }
-
-    // draw waterfall
-    const rowH = Math.max(1, Math.floor(innerH / maxRows));
-    const binW = innerW / numBins;
-
-    for (let r = 0; r < numRows; r++) {
-      const row = waterfall[waterfall.length - numRows + r]; // lấy row cuối cùng
-      const y = margin.top + r * rowH; // vẽ từ trên xuống
-      for (let b = 0; b < numBins; b++) {
-        const val = Number(row.spectrum[b]);
-        const p = Math.min(
-          1,
-          Math.max(0, (val - minVal) / (maxVal - minVal || 1))
-        );
-        ctx.fillStyle = intensityToColor(p);
-        const x = margin.left + b * binW;
-        ctx.fillRect(x, y, binW, rowH);
-      }
-    }
-
-    // Y ticks (time)
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.font = "11px Arial";
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
-    const labels = Math.min(6, numRows);
-    for (let i = 0; i < labels; i++) {
-      const idx = Math.floor((i / (labels - 1 || 1)) * (numRows - 1));
-      const row = waterfall[waterfall.length - numRows + idx];
-      const t = row?.timestamp
-        ? new Date(row.timestamp).toLocaleTimeString()
-        : String(idx);
-      const yPos = margin.top + idx * rowH + rowH / 2;
-      ctx.fillText(t, margin.left - 8, yPos);
-    }
-
-    // draw colorbar
-    const waterfallHeight = rowH * numRows;
-    drawColorbar(
-      ctx,
-      width - margin.right + 8,
-      margin.top,
-      12,
-      waterfallHeight,
-      minVal,
-      maxVal
-    );
-  }, [size]);
-
-  // fetch data
-  useEffect(() => {
-    const timer = setInterval(async () => {
+    const fetchWaterfallData = async () => {
       try {
-        const res = await trackApi.getLatest(deviceId, limit);
-        const data = res?.data || [];
-        const blocks = data.flatMap((t) =>
-          (t.waterfall || []).map((b) => ({
-            ...b,
-            timestamp: b.timestamp || t.timestamp,
-          }))
-        );
+        setLoading(true);
+        setError(null);
 
-        const existingTs = new Set(
-          waterfallRef.current.map((b) => b.timestamp)
+        const res = await trackApi.getHistory(
+          deviceId,
+          startTime,
+          endTime,
+          1000
         );
-        const newBlocks = blocks.filter((b) => !existingTs.has(b.timestamp));
+        const records = res?.data?.data ?? res?.data ?? [];
 
-        if (newBlocks.length) {
-          waterfallRef.current = [...waterfallRef.current, ...newBlocks].slice(
-            -maxRows
+        if (records.length === 0) {
+          setError("Không có dữ liệu trong khoảng thời gian này");
+          setLoading(false);
+          return;
+        }
+
+        const waterfallRecords = records
+          .filter(
+            (r) =>
+              r.waterfall &&
+              Array.isArray(r.waterfall) &&
+              r.waterfall.length > 0
+          )
+          .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+          .slice(-200);
+
+        if (waterfallRecords.length === 0) {
+          setError("Không có dữ liệu waterfall hợp lệ");
+          setLoading(false);
+          return;
+        }
+
+        const config = waterfallRecords[0].waterfall[0];
+        const centerFreq = config.center;
+        const span = config.span;
+        const resolution = config.resolution;
+        const numBins = config.spectrum.length;
+
+        const freqs = [];
+        const startFreq = (centerFreq - span / 2) / 1e6;
+        for (let i = 0; i < numBins; i++) {
+          freqs.push(
+            parseFloat((startFreq + (i * resolution) / 1e6).toFixed(3))
           );
-          setRedrawTrigger((prev) => prev + 1);
         }
+
+        const z = [];
+        const yLabels = [];
+
+        for (let i = waterfallRecords.length - 1; i >= 0; i--) {
+          const record = waterfallRecords[i];
+          let spectrum = record.waterfall[0].spectrum;
+
+          if (record.waterfall.length > 1) {
+            spectrum = new Array(numBins).fill(0);
+            for (const slice of record.waterfall) {
+              for (let j = 0; j < numBins; j++) {
+                spectrum[j] += slice.spectrum[j];
+              }
+            }
+            for (let j = 0; j < numBins; j++) {
+              spectrum[j] /= record.waterfall.length;
+            }
+          }
+
+          z.push(spectrum);
+
+          const timeVN = new Date(record.timestamp);
+          yLabels.push(
+            timeVN.toLocaleTimeString("vi-VN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })
+          );
+        }
+
+        const allValues = z.flat();
+        const zmin = Math.min(...allValues);
+        const zmax = Math.max(...allValues);
+        const zmid = (zmin + zmax) / 2;
+
+        const data = [
+          {
+            type: "heatmap",
+            x: freqs,
+            y: yLabels,
+            z: z,
+            colorscale: [
+              [0.0, "#0f172a"],
+              [0.2, "#1e3a8a"],
+              [0.4, "#22d3ee"],
+              [0.6, "#86efac"],
+              [0.8, "#fef08a"],
+              [1.0, "#fca5a5"],
+            ],
+            zmin: zmin,
+            zmax: zmax,
+            zmid: zmid,
+            colorbar: {
+              title: "Power (dBm)",
+              titleside: "right",
+              tickfont: { color: "#e2e8f0" },
+              titlefont: { color: "#e2e8f0" },
+            },
+            hovertemplate:
+              "Tần số: %{x} MHz<br>Thời gian: %{y}<br>Power: %{z:.1f} dBm<extra></extra>",
+          },
+        ];
+
+        const layout = {
+          title: {
+            text: "",
+            font: { color: "#e2e8f0" },
+          },
+          xaxis: {
+            title: "Tần số (MHz)",
+            range: [freqs[0], freqs[freqs.length - 1]],
+            tickfont: { color: "#e2e8f0" },
+            titlefont: { color: "#e2e8f0" },
+            gridcolor: "#334155",
+          },
+          yaxis: {
+            title: "Thời gian (mới nhất ở trên)",
+            tickfont: { color: "#e2e8f0" },
+            titlefont: { color: "#e2e8f0" },
+            gridcolor: "#334155",
+            autorange: "reversed",
+          },
+          paper_bgcolor: "#0f172a",
+          plot_bgcolor: "#0f172a",
+          margin: { t: 40, r: 80, b: 60, l: 100 },
+          height: 600,
+        };
+
+        Plotly.react(plotRef.current, data, layout, { responsive: true });
+        setLoading(false);
       } catch (err) {
-        console.warn("fetch spectrum failed", err);
+        console.error("Error loading waterfall data:", err);
+        setError("Không thể tải dữ liệu phổ. Vui lòng thử lại.");
+        setLoading(false);
       }
-    }, 3000);
+    };
 
-    return () => clearInterval(timer);
-  }, [deviceId, limit]);
-
-  // resize observer
-  useEffect(() => {
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) {
-        const r = e.contentRect;
-        if (r.width > 0 && r.width !== size.width) {
-          setSize((prevSize) => ({ ...prevSize, width: Math.floor(r.width) }));
-        }
-      }
-    });
-    if (containerRef.current) ro.observe(containerRef.current);
-    return () => ro.disconnect();
-  }, [size.width]);
-
-  // redraw
-  useEffect(() => {
-    drawCanvas();
-  }, [size, redrawTrigger, drawCanvas]);
+    fetchWaterfallData();
+  }, [deviceId, startTime, endTime]);
 
   return (
-    <div
-      ref={containerRef}
-      style={{ width: "100%", height: 420, position: "relative" }}
-    >
-      <canvas ref={canvasRef} style={{ width: "100%", height: "100%" }} />
+    <div className="w-full h-full relative">
+      {loading && (
+        <div className="absolute inset-0 bg-black/70 z-10 flex items-center justify-center rounded-xl">
+          <div className="text-center">
+            <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-emerald-400 text-lg">Đang tải dữ liệu phổ...</p>
+          </div>
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="w-full h-full flex items-center justify-center">
+          <p className="text-red-400 text-lg text-center px-4">{error}</p>
+        </div>
+      )}
+
+      <div ref={plotRef} className="w-full h-full" />
     </div>
   );
 };

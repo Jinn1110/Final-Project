@@ -1,15 +1,9 @@
-import { IsNotEmpty, IsObject, IsOptional, IsString } from 'class-validator';
+// src/device/dto/create-device.dto.ts
+
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class CreateDeviceDto {
-  @IsString()
-  @IsNotEmpty()
-  device_id: string;
-
-  @IsString()
-  @IsNotEmpty()
-  name: string;
-
-  @IsObject()
-  @IsOptional()
-  metadata?: Record<string, any>;
+  @IsString({ message: 'Device ID phải là chuỗi' })
+  @IsNotEmpty({ message: 'Device ID không được để trống' })
+  deviceId: string;
 }

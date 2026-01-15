@@ -16,7 +16,7 @@ import trackApi from "../../../api/trackApi";
 export default function CndAverageChart({
   deviceId = "GNSS-0001",
   limit = 100,
-  height = 150,
+  height = 300,
 }) {
   const [data, setData] = useState({ series: [], constNames: [] });
   const [loading, setLoading] = useState(true);

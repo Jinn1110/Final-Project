@@ -1,11 +1,13 @@
 import {
   Controller,
   Get,
-  Param,
   Post,
-  Body,
   Patch,
+  Param,
+  Body,
+  Delete,
   NotFoundException,
+  Request,
 } from '@nestjs/common';
 import { DevicesService } from './devices.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
@@ -14,38 +16,34 @@ import { CreateDeviceDto } from './dto/create-device.dto';
 export class DevicesController {
   constructor(private readonly devicesService: DevicesService) {}
 
-  // Lấy tất cả thiết bị
-  @Get()
-  async getAllDevices() {
-    return this.devicesService.findAll();
+  @Get('deleted')
+  async findAllDeleted() {
+    return this.devicesService.findAllDeleted();
   }
 
-  // Lấy thiết bị theo device_id
-  @Get(':deviceId')
-  async getDevice(@Param('deviceId') deviceId: string) {
-    const device = await this.devicesService.findOneByDeviceId(deviceId);
-    if (!device) {
-      throw new NotFoundException(`Device ${deviceId} not found`);
-    }
-    return device;
+  // Lấy danh sách thiết bị đang hoạt động
+  @Get('active')
+  async findAllActive() {
+    return this.devicesService.findAllActive();
   }
 
   // Tạo thiết bị mới
   @Post()
-  async createDevice(@Body() createDeviceDto: CreateDeviceDto) {
-    return this.devicesService.createDevice(createDeviceDto);
+  async create(@Body() dto: CreateDeviceDto, @Request() req) {
+    return this.devicesService.createDevice(dto, req.user);
   }
 
-  // Cập nhật metadata hoặc tên thiết bị
-  @Patch(':deviceId')
-  async updateDevice(
-    @Param('deviceId') deviceId: string,
-    @Body() update: Partial<{ name: string; metadata: Record<string, any> }>,
-  ) {
-    const updated = await this.devicesService.updateDevice(deviceId, update);
-    if (!updated) {
-      throw new NotFoundException(`Device ${deviceId} not found`);
-    }
-    return updated;
+  // Soft delete thiết bị theo deviceId
+  @Delete(':id')
+  async softDelete(@Param('id') deviceId: string) {
+    await this.devicesService.softDelete(deviceId);
+    return { message: 'Device marked as deleted' };
+  }
+
+  // Khôi phục thiết bị theo deviceId
+  @Patch(':id/restore')
+  async restore(@Param('id') deviceId: string) {
+    await this.devicesService.restore(deviceId);
+    return { message: 'Device restored' };
   }
 }
