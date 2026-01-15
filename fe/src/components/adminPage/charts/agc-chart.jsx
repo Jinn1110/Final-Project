@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import {
+  ResponsiveContainer,
   LineChart,
   Line,
   XAxis,
@@ -9,204 +10,213 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer,
 } from "recharts";
 import trackApi from "../../../api/trackApi";
 
-const AGCChart = ({ deviceId, limit = 100, height = 350 }) => {
-  const [data, setData] = useState([]); // Tất cả điểm dữ liệu (có rfBlock)
-  const [loading, setLoading] = useState(true);
-  const prevDataRef = useRef(new Map());
+const MAX_BLOCK = 6;
 
+const AGCChart = ({
+  deviceId,
+  latestTrack,
+  limit = 120,
+  height = 380,
+  agcScaleDivider = 100,
+}) => {
+  const [data, setData] = useState([]); // rows: { ts, timestamp, agc_1, agc_2, ... }
+  const [isLoading, setIsLoading] = useState(true);
+  const lastTsRef = useRef(0);
+
+  // Helper: 1 track → 1 row (chỉ AGC của các block)
+  const trackToRow = (track) => {
+    if (!track?.timestamp || !Array.isArray(track.rf_status)) return null;
+
+    const date = new Date(track.timestamp);
+    if (isNaN(date.getTime())) return null;
+
+    const ts = date.getTime();
+    const timestamp = date.toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+    const row = { ts, timestamp };
+
+    track.rf_status.forEach((rf, idx) => {
+      const block = rf.rf_block ?? idx + 1;
+      if (block <= MAX_BLOCK) {
+        row[`agc_${block}`] =
+          typeof rf.agc === "number" ? rf.agc / agcScaleDivider : null;
+      }
+    });
+
+    return row;
+  };
+
+  // INIT: Load lịch sử
   useEffect(() => {
     if (!deviceId) return;
 
-    let cancelled = false;
-    let intervalId;
+    let mounted = true;
+    setIsLoading(true);
+    setData([]);
+    lastTsRef.current = 0;
 
-    const fetchData = async () => {
+    const fetchInitial = async () => {
       try {
-        if (!data.length) setLoading(true);
+        const res = await trackApi.getLatest(deviceId, limit + 50);
+        const tracks = Array.isArray(res?.data) ? res.data : [];
 
-        const res = await trackApi.getLatest(deviceId, limit);
-        const tracks = Array.isArray(res.data)
-          ? res.data
-          : Array.isArray(res.data?.data)
-          ? res.data.data
-          : [];
+        if (!tracks.length) {
+          mounted && setIsLoading(false);
+          return;
+        }
 
-        const newMap = new Map();
+        const rows = tracks
+          .map(trackToRow)
+          .filter(Boolean)
+          .sort((a, b) => a.ts - b.ts); // cũ → mới
 
-        tracks.forEach((track) => {
-          const timestampISO = track.timestamp
-            ? new Date(track.timestamp).toISOString()
-            : new Date().toISOString();
-          const timestamp = new Date(timestampISO).toLocaleTimeString("vi-VN", {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          });
-          const ts = new Date(timestampISO).getTime();
+        if (!rows.length) {
+          mounted && setIsLoading(false);
+          return;
+        }
 
-          if (Array.isArray(track.rf_status) && track.rf_status.length > 0) {
-            track.rf_status.forEach((rf, idx) => {
-              const blockId = rf.rf_block ?? idx;
-              const key = `${ts}_${blockId}`;
+        const latestRows = rows.slice(-limit);
+        lastTsRef.current = latestRows[latestRows.length - 1]?.ts || 0;
 
-              // Tái sử dụng object cũ để tránh re-render không cần thiết
-              const existing = prevDataRef.current.get(key);
-              if (existing) {
-                newMap.set(key, existing);
-              } else {
-                newMap.set(key, {
-                  timestamp,
-                  timestampISO,
-                  rfBlock: blockId,
-                  agc: rf.agc ?? 0,
-                  noise: rf.noise_per_ms ?? 0,
-                  jam: rf.jam_indicator ?? 0,
-                });
-              }
-            });
-          }
-        });
-
-        // Gộp dữ liệu cũ + mới
-        const mergedMap = new Map(prevDataRef.current);
-        newMap.forEach((val, key) => mergedMap.set(key, val));
-
-        // Giữ lại tối đa limit * 12 (an toàn cho ~8 block)
-        const allEntries = Array.from(mergedMap.entries());
-        const sorted = allEntries
-          .sort(([a], [b]) => a.localeCompare(b))
-          .slice(-limit * 12);
-
-        const finalMap = new Map(sorted);
-        const finalData = Array.from(finalMap.values());
-
-        if (!cancelled) {
-          prevDataRef.current = finalMap;
-          setData(finalData);
+        if (mounted) {
+          setData(latestRows);
+          setIsLoading(false);
         }
       } catch (err) {
-        console.error("Failed to load AGC data", err);
-        if (!cancelled) setData([]);
-      } finally {
-        if (!cancelled) setLoading(false);
+        console.error("AGCChart init error:", err);
+        mounted && setIsLoading(false);
       }
     };
 
-    fetchData();
-    intervalId = setInterval(fetchData, 3000);
+    fetchInitial();
 
     return () => {
-      cancelled = true;
-      clearInterval(intervalId);
+      mounted = false;
     };
   }, [deviceId, limit]);
 
-  // Reset khi đổi device
+  // REALTIME: append từ latestTrack
   useEffect(() => {
-    setData([]);
-    prevDataRef.current = new Map();
-    setLoading(true);
-  }, [deviceId]);
+    if (!latestTrack || latestTrack.deviceId !== deviceId) return;
 
-  // Lấy danh sách rfBlock duy nhất để vẽ từng đường
-  const rfBlocks = Array.from(new Set(data.map((d) => d.rfBlock))).sort(
-    (a, b) => a - b
-  );
+    const row = trackToRow(latestTrack);
+    if (!row || row.ts <= lastTsRef.current) return;
 
-  // Màu sắc đẹp, phân biệt rõ từng block
+    lastTsRef.current = row.ts;
+
+    setData((prev) => {
+      const updated = [...prev, row];
+      return updated.length > limit ? updated.slice(-limit) : updated;
+    });
+  }, [latestTrack, deviceId, limit]);
+
+  // Tìm các block có dữ liệu AGC thực tế
+  const activeBlocks = Array.from(
+    new Set(
+      data.flatMap((row) =>
+        Object.keys(row)
+          .filter((k) => k.startsWith("agc_"))
+          .map((k) => Number(k.split("_")[1]))
+      )
+    )
+  ).sort((a, b) => a - b);
+
   const colors = [
-    "#06b6d4", // cyan
-    "#f59e0b", // amber
-    "#10b981", // emerald
-    "#f43f5e", // rose
-    "#8b5cf6", // violet
-    "#ec4899", // pink
-    "#3b82f6", // blue
-    "#eab308", // yellow
+    "#06b6d4",
+    "#f59e0b",
+    "#10b981",
+    "#f43f5e",
+    "#8b5cf6",
+    "#ec4899",
   ];
 
-  if (loading && !data.length) {
+  if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-400">Đang tải dữ liệu AGC...</div>
+      <div className="w-full h-full flex items-center justify-center text-gray-400">
+        Đang tải dữ liệu AGC...
       </div>
     );
   }
 
   if (!data.length) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-400">Không có dữ liệu AGC</div>
+      <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
+        Chưa có dữ liệu AGC
       </div>
     );
   }
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <LineChart margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="4 4" stroke="#333" vertical={false} />
+      <LineChart
+        data={data}
+        margin={{ top: 10, right: 30, left: 10, bottom: 20 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke="#222" />
 
         <XAxis
           dataKey="timestamp"
-          stroke="#a3a3a3"
-          tick={{ fontSize: 12 }}
-          interval={Math.floor(data.length / 8)}
+          tick={{ fontSize: 11, fill: "#aaa" }}
+          stroke="#444"
+          interval="preserveStartEnd"
         />
 
         <YAxis
-          stroke="#a3a3a3"
-          tick={{ fontSize: 12 }}
+          width={60}
+          stroke="#444"
+          tick={{ fontSize: 11, fill: "#aaa" }}
+          domain={["dataMin - 5", "dataMax + 10"]}
           label={{
-            value: "AGC (dB)",
+            value: `AGC (${agcScaleDivider > 1 ? "scaled" : ""} dB)`,
             angle: -90,
             position: "insideLeft",
-            style: { fill: "#a3a3a3" },
+            fill: "#aaa",
+            fontSize: 12,
           }}
-          domain={["dataMin - 10", "dataMax + 10"]}
         />
 
         <Tooltip
           contentStyle={{
-            backgroundColor: "#1a1a1a",
-            border: "1px solid #404040",
-            borderRadius: "8px",
-            padding: "8px 12px",
+            backgroundColor: "#0f172a",
+            border: "1px solid #334155",
+            borderRadius: "6px",
+            color: "#e2e8f0",
           }}
-          labelStyle={{ color: "#e5e7eb", marginBottom: "4px" }}
-          formatter={(value, name, props) => {
-            if (name.includes("AGC")) {
-              return [`${value} dB`, `Block ${props.payload.rfBlock} - AGC`];
-            }
-            return [value, name];
-          }}
+          labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
+          formatter={(value, name) => [
+            value == null ? "N/A" : value.toFixed(2),
+            name,
+          ]}
           labelFormatter={(label) => `Thời gian: ${label}`}
         />
 
-        <Legend wrapperStyle={{ paddingTop: "10px" }} iconType="line" />
+        <Legend
+          verticalAlign="top"
+          height={36}
+          wrapperStyle={{ color: "#ddd", fontSize: 12 }}
+        />
 
-        {/* Vẽ riêng một Line cho mỗi rf_block */}
-        {rfBlocks.map((blockId, index) => {
-          const blockData = data.filter((d) => d.rfBlock === blockId);
-
-          return (
-            <Line
-              key={blockId}
-              type="monotone"
-              data={blockData}
-              dataKey="agc"
-              name={`Block ${blockId}`}
-              stroke={colors[index % colors.length]}
-              strokeWidth={2.5}
-              dot={false}
-              isAnimationActive={false}
-              connectNulls={true}
-            />
-          );
-        })}
+        {activeBlocks.map((block) => (
+          <Line
+            key={block}
+            type="monotone"
+            dataKey={`agc_${block}`}
+            name={`Block ${block}`}
+            stroke={colors[(block - 1) % colors.length]}
+            strokeWidth={2.5}
+            dot={false}
+            activeDot={{ r: 6 }}
+            connectNulls={true}
+            isAnimationActive={false}
+          />
+        ))}
       </LineChart>
     </ResponsiveContainer>
   );

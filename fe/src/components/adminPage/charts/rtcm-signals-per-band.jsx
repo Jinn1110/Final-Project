@@ -11,22 +11,21 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import trackApi from "../../../api/trackApi";
+import trackRtcmApi from "../../../api/trackRtcmApi";
 
-export default function CndAverageChart({
+export default function RTCMSignalsPerBandChart({
   deviceId,
   latestTrack,
-  limit = 100,
-  height = 300,
+  limit = 120,
+  height = 380,
 }) {
   const [series, setSeries] = useState([]);
-  const [constNames, setConstNames] = useState([]);
+  const [bandNames, setBandNames] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const lastTsRef = useRef(0);
 
-  // Helper: track → point
   const trackToPoint = (t) => {
-    if (!t?.timestamp) return null;
+    if (!t?.timestamp || !Array.isArray(t.constellations)) return null;
 
     const tsDate = new Date(t.timestamp);
     if (isNaN(tsDate.getTime())) return null;
@@ -40,23 +39,16 @@ export default function CndAverageChart({
       }),
     };
 
-    // Overall C/N₀ (ưu tiên cn0_total)
-    if (typeof t.cn0_total === "number" && !isNaN(t.cn0_total)) {
-      point.cnd = t.cn0_total;
-    } else if (Array.isArray(t.constellations) && t.constellations.length > 0) {
-      const validCn0 = t.constellations
-        .map((c) => Number(c?.cn0))
-        .filter((v) => !isNaN(v) && v > 0);
-      if (validCn0.length > 0) {
-        point.cnd = validCn0.reduce((sum, v) => sum + v, 0) / validCn0.length;
-      }
-    }
-
-    // Per-constellation
+    // Thu thập tất cả bands từ tất cả constellations
     if (Array.isArray(t.constellations)) {
       t.constellations.forEach((c) => {
-        if (c?.name && typeof c.cn0 === "number" && !isNaN(c.cn0)) {
-          point[c.name] = c.cn0;
+        if (c?.signals_per_band && typeof c.signals_per_band === "object") {
+          Object.entries(c.signals_per_band).forEach(([band, num]) => {
+            if (typeof num === "number") {
+              const key = `${c.constellation}-${band}`; // ví dụ: GPS-L1, BeiDou-B1
+              point[key] = num;
+            }
+          });
         }
       });
     }
@@ -64,56 +56,47 @@ export default function CndAverageChart({
     return point;
   };
 
-  // INIT: Load lịch sử
   useEffect(() => {
     if (!deviceId) return;
 
     let mounted = true;
     setIsLoading(true);
     setSeries([]);
-    setConstNames([]);
+    setBandNames([]);
     lastTsRef.current = 0;
 
     const fetchInitial = async () => {
       try {
-        const res = await trackApi.getLatest(deviceId, limit + 50); // dư để an toàn
+        const res = await trackRtcmApi.getLatest(deviceId, limit + 20);
         const tracks = Array.isArray(res?.data) ? res.data : [];
 
-        if (!tracks.length) {
-          mounted && setIsLoading(false);
-          return;
-        }
+        if (!tracks.length) return;
 
         const points = tracks
           .map(trackToPoint)
           .filter(Boolean)
-          .sort((a, b) => a.ts - b.ts); // cũ → mới
+          .sort((a, b) => a.ts - b.ts);
 
-        if (!points.length) {
-          mounted && setIsLoading(false);
-          return;
-        }
+        if (!points.length) return;
 
         const latestPoints = points.slice(-limit);
         lastTsRef.current = latestPoints[latestPoints.length - 1]?.ts || 0;
 
-        const allNames = Array.from(
+        // Thu thập tất cả band keys duy nhất
+        const allBands = Array.from(
           new Set(
-            tracks.flatMap((t) =>
-              Array.isArray(t.constellations)
-                ? t.constellations.map((c) => c?.name).filter(Boolean)
-                : []
-            )
+            points.flatMap((p) => Object.keys(p).filter((k) => k.includes("-")))
           )
         );
 
         if (mounted) {
           setSeries(latestPoints);
-          setConstNames(allNames);
+          setBandNames(allBands);
           setIsLoading(false);
         }
       } catch (err) {
-        console.error("CndAverageChart init error:", err);
+        console.error("RTCMSignalsPerBandChart init error:", err);
+      } finally {
         mounted && setIsLoading(false);
       }
     };
@@ -125,7 +108,6 @@ export default function CndAverageChart({
     };
   }, [deviceId, limit]);
 
-  // REALTIME append từ latestTrack (từ socket)
   useEffect(() => {
     if (!latestTrack || latestTrack.deviceId !== deviceId) return;
 
@@ -139,42 +121,48 @@ export default function CndAverageChart({
       return updated.length > limit ? updated.slice(-limit) : updated;
     });
 
-    // Cập nhật constNames nếu có constellation mới
+    // Cập nhật band names mới nếu có
     if (Array.isArray(latestTrack.constellations)) {
-      setConstNames((prev) => {
-        const newNames = latestTrack.constellations
-          .map((c) => c?.name)
-          .filter(Boolean);
-        return Array.from(new Set([...prev, ...newNames]));
+      const newBands = [];
+      latestTrack.constellations.forEach((c) => {
+        if (c?.signals_per_band) {
+          Object.keys(c.signals_per_band).forEach((band) => {
+            const key = `${c.constellation}-${band}`;
+            if (!newBands.includes(key)) newBands.push(key);
+          });
+        }
       });
+      setBandNames((prev) => Array.from(new Set([...prev, ...newBands])));
     }
   }, [latestTrack, deviceId, limit]);
 
   if (isLoading) {
     return (
       <div className="w-full h-full flex items-center justify-center text-gray-400">
-        Đang tải dữ liệu C/N₀...
+        Đang tải tín hiệu theo băng tần RTCM...
       </div>
     );
   }
 
-  if (series.length === 0) {
+  if (!series.length) {
     return (
       <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
-        Chưa có dữ liệu C/N₀
+        Chưa có dữ liệu tín hiệu theo băng tần RTCM
       </div>
     );
   }
 
   const palette = [
-    "#06B6D4", // Overall
+    "#06B6D4",
     "#3B82F6",
     "#F97316",
     "#22C55E",
     "#A78BFA",
     "#F43F5E",
     "#FBBF24",
-    "#10B981",
+    "#8B5CF6",
+    "#EC4899",
+    "#14B8A6",
   ];
 
   return (
@@ -194,9 +182,9 @@ export default function CndAverageChart({
           tick={{ fontSize: 11, fill: "#aaa" }}
           stroke="#444"
           width={50}
-          domain={["dataMin - 5", "dataMax + 5"]} // padding lớn hơn một chút cho C/N₀
+          domain={["dataMin - 5", "dataMax + 10"]}
           label={{
-            value: "C/N₀ (dB-Hz)",
+            value: "Số tín hiệu",
             angle: -90,
             position: "insideLeft",
             fill: "#aaa",
@@ -212,10 +200,6 @@ export default function CndAverageChart({
             color: "#e2e8f0",
           }}
           labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
-          formatter={(value) => [
-            value != null ? `${value.toFixed(1)} dB-Hz` : "N/A",
-            null,
-          ]}
         />
         <Legend
           verticalAlign="top"
@@ -223,29 +207,18 @@ export default function CndAverageChart({
           wrapperStyle={{ color: "#ddd", fontSize: 12 }}
         />
 
-        {/* Overall */}
-        <Line
-          type="monotone"
-          dataKey="cnd"
-          stroke={palette[0]}
-          strokeWidth={2.5}
-          dot={false}
-          activeDot={{ r: 6, strokeWidth: 2 }}
-          name="Overall C/N₀"
-        />
-
-        {/* Per-constellation */}
-        {constNames.map((name, i) => (
+        {/* Chỉ vẽ các đường băng tần, không có tổng */}
+        {bandNames.map((bandKey, i) => (
           <Line
-            key={name}
+            key={bandKey}
             type="monotone"
-            dataKey={name}
-            stroke={palette[(i + 1) % palette.length]}
+            dataKey={bandKey}
+            name={bandKey} // hiển thị GPS-L1, BeiDou-B1...
+            stroke={palette[i % palette.length]}
             strokeWidth={1.8}
             dot={false}
             activeDot={{ r: 5 }}
             connectNulls={false}
-            name={name}
           />
         ))}
       </LineChart>

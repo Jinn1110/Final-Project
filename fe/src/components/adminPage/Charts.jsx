@@ -1,11 +1,19 @@
-import React, { useEffect, useState, useMemo } from "react";
-import deviceApi from "../../api/deviceApi";
+"use client";
+
+import React, { useEffect, useState, useRef } from "react";
+import io from "socket.io-client";
 import trackApi from "../../api/trackApi";
+import deviceApi from "../../api/deviceApi";
+import trackRtcmApi from "../../api/trackRtcmApi";
 import SpectrumWaterfall from "./charts/spectrum-waterfall";
 import CndAverageChart from "./charts/cnd-average";
 import AGCChart from "./charts/agc-chart";
-import ScatterPlot from "./charts/scatter-plot";
-import BarChart from "./charts/bar-chart";
+import RTCMCn0Chart from "./charts/RTCMCn0Chart";
+import RTCMSatsChart from "./charts/rtcm-sats";
+import RTCMSignalsPerBandChart from "./charts/rtcm-signals-per-band";
+
+const SOCKET_URL =
+  import.meta.env.VITE_URL_BACKEND || "http://18.142.240.186:3001";
 
 const GnssIcon = ({ className = "w-5 h-5" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -28,100 +36,34 @@ export default function Charts() {
   const [filter, setFilter] = useState("");
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [showModal, setShowModal] = useState(false);
-  const [timeRange, setTimeRange] = useState("1h");
-  const [startDate, setStartDate] = useState(""); // datetime-local value (giờ VN)
-  const [endDate, setEndDate] = useState("");
-  const [currentPage, setCurrentPage] = useState(1);
   const [loadingDevices, setLoadingDevices] = useState(true);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [deviceType, setDeviceType] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [latestTrack, setLatestTrack] = useState(null);
 
-  const timePresets = [
-    { key: "15min", label: "15 phút" },
-    { key: "1h", label: "1 giờ" },
-    { key: "6h", label: "6 giờ" },
-    { key: "24h", label: "24 giờ" },
-    { key: "7d", label: "7 ngày" },
-  ];
+  const socketRef = useRef(null);
 
-  // Cập nhật thời gian hiện tại mỗi giây khi modal mở
   useEffect(() => {
-    if (!showModal) return;
-
-    const interval = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [showModal]);
-
-  // Hiển thị thời gian đúng giờ Việt Nam (UTC+7)
-  const formatDisplayTime = (isoString) => {
-    if (!isoString) return "—";
-
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) return "Invalid Date";
-
-    return date.toLocaleString("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      hour12: false,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+    socketRef.current = io(SOCKET_URL, {
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+      transports: ["websocket", "polling"],
     });
-  };
 
-  // Thời gian gửi API: luôn là UTC ISO full (backend mong nhận UTC)
-  const timeFilterForApi = useMemo(() => {
-    if (startDate && endDate) {
-      // Người dùng chọn giờ Việt Nam → chuyển sang UTC cho API
-      return {
-        start: new Date(startDate).toISOString(),
-        end: new Date(endDate).toISOString(),
-      };
-    }
+    socketRef.current.on("connect", () => console.log("Socket.IO connected!"));
+    socketRef.current.on("connect_error", (err) =>
+      console.error("Socket connect error:", err.message)
+    );
+    socketRef.current.on("disconnect", (reason) =>
+      console.log("Socket disconnected:", reason)
+    );
 
-    // Preset: tính từ giờ hiện tại (giờ Việt Nam)
-    const now = new Date();
-    let start = new Date(now);
+    return () => socketRef.current.disconnect();
+  }, []);
 
-    switch (timeRange) {
-      case "15min":
-        start.setMinutes(now.getMinutes() - 15);
-        break;
-      case "1h":
-        start.setHours(now.getHours() - 1);
-        break;
-      case "6h":
-        start.setHours(now.getHours() - 6);
-        break;
-      case "24h":
-        start.setDate(now.getDate() - 1);
-        break;
-      case "7d":
-        start.setDate(now.getDate() - 7);
-        break;
-      default:
-        start.setHours(now.getHours() - 1);
-    }
-
-    return {
-      start: start.toISOString(),
-      end: now.toISOString(),
-    };
-  }, [timeRange, startDate, endDate]);
-
-  const isCustom = !!startDate && !!endDate;
-
-  const handleTimeRangeChange = (range) => {
-    setTimeRange(range);
-    setStartDate("");
-    setEndDate("");
-  };
-
-  // Load danh sách thiết bị
   useEffect(() => {
     const loadDevices = async () => {
       try {
@@ -132,7 +74,6 @@ export default function Charts() {
         setFilteredDevices(list);
       } catch (err) {
         console.error("Failed to load devices:", err);
-        alert("Không thể tải danh sách thiết bị.");
         setDevices([]);
         setFilteredDevices([]);
       } finally {
@@ -142,7 +83,6 @@ export default function Charts() {
     loadDevices();
   }, []);
 
-  // Tìm kiếm
   useEffect(() => {
     const filtered = devices.filter((d) =>
       (d.deviceId || d._id || "")
@@ -154,7 +94,6 @@ export default function Charts() {
     setCurrentPage(1);
   }, [devices, filter]);
 
-  // Pagination
   const totalPages = Math.ceil(filteredDevices.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const endIndex = Math.min(
@@ -166,17 +105,58 @@ export default function Charts() {
   const goToPage = (page) =>
     setCurrentPage(Math.max(1, Math.min(page, totalPages || 1)));
 
-  const openCharts = (deviceId) => {
+  useEffect(() => {
+    if (!showModal || !selectedDevice || !socketRef.current) return;
+
+    const fetchInitial = async () => {
+      try {
+        let res;
+        if (deviceType === "RTCM") {
+          res = await trackRtcmApi.getLatest(selectedDevice, 1);
+        } else {
+          res = await trackApi.getLatest(selectedDevice, 1);
+        }
+        const data = res?.data?.[0];
+        if (data) setLatestTrack(data);
+      } catch (err) {
+        console.error("Error fetching initial latest track:", err);
+      }
+    };
+    fetchInitial();
+
+    socketRef.current.emit("subscribeDevice", selectedDevice);
+
+    const handleNewTrack = (newTrack) => {
+      if (newTrack.deviceId === selectedDevice) {
+        console.log(
+          "New track received for",
+          selectedDevice,
+          "at",
+          newTrack.timestamp
+        );
+        setLatestTrack(newTrack);
+      }
+    };
+    socketRef.current.on("newTrack", handleNewTrack);
+
+    return () => {
+      socketRef.current.emit("unsubscribeDevice", selectedDevice);
+      socketRef.current.off("newTrack", handleNewTrack);
+    };
+  }, [showModal, selectedDevice, deviceType]);
+
+  const openCharts = (deviceId, type) => {
     setSelectedDevice(deviceId);
+    setDeviceType(type);
+    setLatestTrack(null);
     setShowModal(true);
-    setTimeRange("1h");
-    setStartDate("");
-    setEndDate("");
   };
 
   const closeModal = () => {
     setShowModal(false);
     setSelectedDevice(null);
+    setDeviceType(null);
+    setLatestTrack(null);
   };
 
   return (
@@ -207,7 +187,8 @@ export default function Charts() {
 
           {loadingDevices ? (
             <div className="text-center py-20 text-zinc-600">
-              Đang tải danh sách thiết bị...
+              <div className="animate-spin inline-block w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full" />
+              <p className="mt-4">Đang tải danh sách thiết bị...</p>
             </div>
           ) : currentDevices.length === 0 ? (
             <div className="text-center py-20 text-zinc-600 text-lg">
@@ -216,10 +197,11 @@ export default function Charts() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[800px]">
                   <thead>
                     <tr className="text-left text-zinc-500 text-sm border-b border-zinc-800">
                       <th className="px-6 py-4 font-medium">Device ID</th>
+                      <th className="px-6 py-4 font-medium">Type</th>
                       <th className="px-6 py-4 font-medium">Chủ Sở Hữu</th>
                       <th className="px-6 py-4 font-medium">
                         Lần Kết Nối Cuối
@@ -232,6 +214,7 @@ export default function Charts() {
                   <tbody>
                     {currentDevices.map((device) => {
                       const id = device.deviceId || device._id || device.id;
+                      const type = device.type || "Unknown";
                       return (
                         <tr
                           key={id}
@@ -242,22 +225,36 @@ export default function Charts() {
                             {id}
                           </td>
                           <td className="px-6 py-4 text-zinc-300">
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-medium ${
+                                type === "UBX"
+                                  ? "bg-blue-600/70 text-blue-200"
+                                  : type === "RTCM"
+                                  ? "bg-purple-600/70 text-purple-200"
+                                  : "bg-gray-600/70 text-gray-200"
+                              }`}
+                            >
+                              {type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-zinc-300">
                             {device.owner || "—"}
                           </td>
                           <td className="px-6 py-4 text-zinc-400 text-sm">
                             {device.lastSeen
-                              ? formatDisplayTime(device.lastSeen)
+                              ? new Date(device.lastSeen).toLocaleString(
+                                  "vi-VN",
+                                  { timeZone: "Asia/Ho_Chi_Minh" }
+                                )
                               : "Chưa kết nối"}
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="flex justify-center">
-                              <button
-                                onClick={() => openCharts(id)}
-                                className="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-all shadow-lg shadow-emerald-600/20"
-                              >
-                                Xem Charts
-                              </button>
-                            </div>
+                          <td className="px-6 py-4 text-center">
+                            <button
+                              onClick={() => openCharts(id, type)}
+                              className="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-all shadow-lg shadow-emerald-600/20"
+                            >
+                              Xem Charts
+                            </button>
                           </td>
                         </tr>
                       );
@@ -334,7 +331,7 @@ export default function Charts() {
       {showModal && selectedDevice && (
         <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 overflow-y-auto">
           <div className="w-full max-w-7xl max-h-[95vh] bg-zinc-900 rounded-2xl border border-zinc-800 shadow-2xl flex flex-col">
-            {/* Header modal */}
+            {/* Header */}
             <div className="p-5 border-b border-zinc-800 bg-zinc-900/70 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="flex items-center gap-4">
                 <button
@@ -345,146 +342,94 @@ export default function Charts() {
                 </button>
                 <h2 className="text-2xl font-bold flex items-center gap-3">
                   <GnssIcon className="w-8 h-8 text-emerald-500" />
-                  Charts — {selectedDevice}
+                  Real-time Charts — {selectedDevice} ({deviceType})
                 </h2>
               </div>
-
-              {/* Thời gian hiển thị (giờ Việt Nam) */}
-              <div className="text-base font-medium text-emerald-400 text-right sm:text-left">
-                Từ: <strong>{formatDisplayTime(timeFilterForApi.start)}</strong>{" "}
-                → <strong>{formatDisplayTime(timeFilterForApi.end)}</strong>
-              </div>
             </div>
 
-            {/* Time filter */}
-            <div className="px-6 py-4 bg-zinc-900/40 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex bg-zinc-800 rounded-xl border border-zinc-700 p-1.5 gap-1">
-                {timePresets.map(({ key, label }) => (
-                  <button
-                    key={key}
-                    onClick={() => handleTimeRangeChange(key)}
-                    className={`px-5 py-2 rounded-lg text-sm font-medium transition-all ${
-                      timeRange === key && !isCustom
-                        ? "bg-emerald-600 text-white shadow-md"
-                        : "text-zinc-400 hover:text-white hover:bg-zinc-700"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span className="text-zinc-500 text-sm">
-                  Tùy chỉnh (giờ VN):
-                </span>
-                <input
-                  type="datetime-local"
-                  value={startDate}
-                  onChange={(e) => {
-                    setStartDate(e.target.value);
-                    setTimeRange("");
-                  }}
-                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-                />
-                <span className="text-zinc-500">→</span>
-                <input
-                  type="datetime-local"
-                  value={endDate}
-                  onChange={(e) => {
-                    setEndDate(e.target.value);
-                    setTimeRange("");
-                  }}
-                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-            </div>
-
-            {/* Charts grid */}
+            {/* Charts */}
             <div className="flex-1 overflow-y-auto p-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div className="lg:col-span-2 bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-                  <h3 className="text-2xl font-bold text-emerald-400 mb-6">
-                    Spectrum Waterfall
-                  </h3>
-                  <div className="h-96 rounded-xl overflow-hidden bg-black/50">
-                    <SpectrumWaterfall
-                      deviceId={selectedDevice}
-                      startTime={timeFilterForApi.start}
-                      endTime={timeFilterForApi.end}
-                    />
+              {deviceType === "UBX" ? (
+                <div className="space-y-12">
+                  <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
+                    <h3 className="text-2xl font-bold text-emerald-400 mb-6 text-center">
+                      Spectrum Waterfall (Real-time)
+                    </h3>
+                    <div className="h-[500px] rounded-xl overflow-hidden bg-black/50">
+                      <SpectrumWaterfall
+                        deviceId={selectedDevice}
+                        latestTrack={latestTrack}
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="lg:col-span-2 bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-                  <h3 className="text-2xl font-bold text-emerald-400 mb-6">
-                    Position Deviation (Lat/Lon)
-                  </h3>
-                  <div className="h-145 rounded-xl overflow-hidden bg-black/50">
-                    <ScatterPlot
-                      deviceId={selectedDevice}
-                      startTime={timeFilterForApi.start}
-                      endTime={timeFilterForApi.end}
-                    />
+                  <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
+                    <h3 className="text-2xl font-bold text-emerald-400 mb-6 text-center">
+                      C/N₀ Average (Real-time)
+                    </h3>
+                    <div className="h-80">
+                      <CndAverageChart
+                        deviceId={selectedDevice}
+                        latestTrack={latestTrack}
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-                  <h3 className="text-xl font-bold text-emerald-400 mb-5">
-                    C/N₀ Average (dB-Hz)
-                  </h3>
-                  <div className="h-80">
-                    <CndAverageChart
-                      deviceId={selectedDevice}
-                      startTime={timeFilterForApi.start}
-                      endTime={timeFilterForApi.end}
-                    />
+                  <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
+                    <h3 className="text-2xl font-bold text-emerald-400 mb-6 text-center">
+                      AGC Level (Real-time)
+                    </h3>
+                    <div className="h-80">
+                      <AGCChart
+                        deviceId={selectedDevice}
+                        latestTrack={latestTrack}
+                      />
+                    </div>
                   </div>
                 </div>
+              ) : deviceType === "RTCM" ? (
+                <div className="space-y-12">
+                  <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
+                    <h3 className="text-2xl font-bold text-emerald-400 mb-6 text-center">
+                      RTCM C/N₀ Quality (Real-time)
+                    </h3>
+                    <div className="h-96">
+                      <RTCMCn0Chart
+                        deviceId={selectedDevice}
+                        latestTrack={latestTrack}
+                      />
+                    </div>
+                  </div>
 
-                <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-                  <h3 className="text-xl font-bold text-emerald-400 mb-5">
-                    AGC Level
-                  </h3>
-                  <div className="h-80">
-                    <AGCChart
-                      deviceId={selectedDevice}
-                      startTime={timeFilterForApi.start}
-                      endTime={timeFilterForApi.end}
-                    />
+                  <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
+                    <h3 className="text-2xl font-bold text-emerald-400 mb-6 text-center">
+                      Số lượng vệ tinh theo chòm sao (Real-time)
+                    </h3>
+                    <div className="h-96">
+                      <RTCMSatsChart
+                        deviceId={selectedDevice}
+                        latestTrack={latestTrack}
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-                  <h3 className="text-xl font-bold text-cyan-400 mb-5">
-                    Latitude Error (m)
-                  </h3>
-                  <div className="h-72">
-                    <BarChart
-                      deviceId={selectedDevice}
-                      type="latitude"
-                      color="#06B6D4"
-                      startTime={timeFilterForApi.start}
-                      endTime={timeFilterForApi.end}
-                    />
+                  <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
+                    <h3 className="text-2xl font-bold text-emerald-400 mb-6 text-center">
+                      Số tín hiệu theo băng tần (Real-time)
+                    </h3>
+                    <div className="h-110">
+                      <RTCMSignalsPerBandChart
+                        deviceId={selectedDevice}
+                        latestTrack={latestTrack}
+                      />
+                    </div>
                   </div>
                 </div>
-
-                <div className="bg-zinc-900/80 rounded-2xl border border-zinc-800 p-6 shadow-xl">
-                  <h3 className="text-xl font-bold text-orange-400 mb-5">
-                    Longitude Error (m)
-                  </h3>
-                  <div className="h-72">
-                    <BarChart
-                      deviceId={selectedDevice}
-                      type="longitude"
-                      color="#F97316"
-                      startTime={timeFilterForApi.start}
-                      endTime={timeFilterForApi.end}
-                    />
-                  </div>
+              ) : (
+                <div className="text-center py-20 text-zinc-400">
+                  Loại thiết bị không hỗ trợ chart
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </div>

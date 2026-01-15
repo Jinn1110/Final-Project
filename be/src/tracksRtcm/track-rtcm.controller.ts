@@ -1,3 +1,4 @@
+// track-rtcm.controller.ts
 import {
   Controller,
   Get,
@@ -8,22 +9,22 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
-import { TracksService } from './tracks.service';
+import { TrackRtcmService } from './track-rtcm.service';
 import { DevicesService } from '../devices/devices.service';
 import { Public } from '../common/decorators/isPublic';
 
-@Controller('tracks')
-export class TracksController {
+@Controller('track-rtcm')
+export class TrackRtcmController {
   constructor(
-    private readonly tracksService: TracksService,
+    private readonly trackRtcmService: TrackRtcmService,
     private readonly devicesService: DevicesService,
   ) {}
 
-  // Lấy vị trí mới nhất của tất cả thiết bị (dùng cho Map realtime)
+  // Lấy dữ liệu mới nhất của tất cả thiết bị RTCM
   @Get('latest/all')
   @Public()
   async getLatestAll() {
-    return this.tracksService.getLatestForAllDevices();
+    return this.trackRtcmService.getLatestForAllDevices?.() || [];
   }
 
   // Lấy dữ liệu mới nhất của một thiết bị
@@ -37,10 +38,12 @@ export class TracksController {
 
     const numLimit = Math.max(1, Math.min(parseInt(limit) || 1, 100));
 
-    return this.tracksService.getLatestTracks(deviceId, numLimit);
+    return this.trackRtcmService
+      .findByDevice(deviceId)
+      .then((tracks) => tracks.slice(0, numLimit));
   }
 
-  // Lấy lịch sử dữ liệu theo khoảng thời gian (QUAN TRỌNG CHO CHARTS)
+  // Lấy lịch sử dữ liệu theo khoảng thời gian
   @Get(':deviceId/history')
   @Public()
   async getHistory(
@@ -70,31 +73,33 @@ export class TracksController {
 
     const numLimit = Math.max(1, Math.min(parseInt(limit) || 1000, 5000));
 
-    return this.tracksService.getHistory(
-      deviceId,
-      startDate,
-      endDate,
-      numLimit,
+    const tracks = await this.trackRtcmService.findByDevice(deviceId);
+    const filtered = tracks.filter(
+      (t) =>
+        new Date(t.timestamp) >= startDate && new Date(t.timestamp) <= endDate,
     );
+
+    return filtered.slice(0, numLimit);
   }
 
-  // Ingest dữ liệu track từ thiết bị
+  // Ingest dữ liệu RTCM từ thiết bị
   @Post()
   @Public()
   async createTrack(@Body() payload: any) {
-    // Frontend gửi deviceId (camelCase)
-    if (!payload.deviceId || !payload.timestamp) {
-      throw new BadRequestException('Thiếu deviceId hoặc timestamp');
+    if (!payload.deviceId) {
+      throw new BadRequestException('Thiếu deviceId');
     }
 
     const deviceId = payload.deviceId;
-
     await this.validateDevice(deviceId);
 
-    const savedTrack = await this.tracksService.ingest(payload);
+    // Gán timestamp hiện tại khi gửi JSON
+    payload.timestamp = new Date().toISOString();
+
+    const savedTrack = await this.trackRtcmService.create(payload);
 
     if (!savedTrack) {
-      throw new BadRequestException('Lưu track thất bại');
+      throw new BadRequestException('Lưu track RTCM thất bại');
     }
 
     // Cập nhật lastSeen cho device
@@ -105,12 +110,12 @@ export class TracksController {
 
     return {
       success: true,
-      message: 'Track ingested successfully',
+      message: 'Track RTCM ingested successfully',
       data: savedTrack,
     };
   }
 
-  // Phương thức riêng để validate device
+  // Validate device
   private async validateDevice(deviceId: string) {
     const device = await this.devicesService.findOneByDeviceId(deviceId);
     if (!device) {
